@@ -183,7 +183,8 @@ export class Tree implements TreeObject {
     genTabs: ReturnType<typeof getGenTabsFn> = getGenTabsFn(options.tabWidth || 2),
   ): string {
     if (!isIterable(node)) {
-      const stringified = getRawValue(node)!;
+      // Use nullish coalescing to default to an empty string if getRawValue returns null/undefined, preventing potential errors.
+      const stringified = getRawValue(node) ?? "";
 
       if (!options.pure) {
         node.length = stringified.length;
