@@ -22,6 +22,7 @@ export interface Config {
   formatTabWidth: number;
   prettyFormat: boolean;
   enableSyncScroll: boolean; // the left and right side editors scroll in sync
+  enableSyncFold?: boolean; // the left and right side editors fold in sync
   isTouchpad?: boolean;
   fixSideNav: boolean;
 }
@@ -39,6 +40,7 @@ export const defaultConfig: Config = {
   formatTabWidth: 2,
   prettyFormat: true,
   enableSyncScroll: true,
+  enableSyncFold: true,
   isTouchpad: undefined,
   fixSideNav: false,
 };
