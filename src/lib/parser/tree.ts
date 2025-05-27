@@ -66,61 +66,6 @@ export class Tree implements TreeObject {
     return Tree.assign({} as TreeObject, this);
   }
 
-  findNodeByPath(jsonPath: string): Node | undefined {
-    const pathSegments = jsonc.parsePath(jsonPath);
-
-    if (!pathSegments || pathSegments.length === 0) {
-      // jsonc.parsePath returns an empty array for invalid paths or paths like "$"
-      // For an empty path or "$", we should return the root if it exists.
-      // However, if jsonPath is truly invalid, parsePath might return something else or throw.
-      // Based on documentation, it returns an empty array for invalid paths.
-      // If path is just "$" or empty, it implies root.
-      // Let's assume an empty segments array means "no path" or "root path" if jsonPath was "$" or empty.
-      // If jsonPath was invalid, parsePath returns empty array.
-      // To distinguish, we might need to check original jsonPath,
-      // but for now, if segments are empty, and jsonPath was trivial (e.g. '$', '') return root.
-      // A robust way: jsonc.parsePath can throw an error for truly malformed paths.
-      // Let's assume parsePath returns empty for invalid, and for root path like "$"
-      // If jsonPath is "" or "$", pathSegments will be [].
-      if (jsonPath === "$" || jsonPath === "") {
-        return this.root();
-      }
-      return undefined; // Invalid or unhandled path
-    }
-
-    let currentNode = this.root();
-    if (!currentNode) {
-      return undefined; // No root node
-    }
-
-    for (const segment of pathSegments) {
-      if (!currentNode) {
-        return undefined; // Should not happen if previous checks are correct
-      }
-
-      // Check if current node is of a type that can have children accessed by this segment
-      if (typeof segment === "number") { // Array index
-        if (currentNode.type !== "array") {
-          return undefined; // Trying to access array index on non-array
-        }
-      } else if (typeof segment === "string") { // Object key
-        if (currentNode.type !== "object") {
-          return undefined; // Trying to access object key on non-object
-        }
-      } else {
-        return undefined; // Unknown segment type
-      }
-
-      const childNode = this.getChild(currentNode, String(segment));
-      if (!childNode) {
-        return undefined; // Child not found
-      }
-      currentNode = childNode;
-    }
-
-    return currentNode;
-  }
-
   valid() {
     return this.root() && !this.hasError();
   }
@@ -344,10 +289,6 @@ export class Tree implements TreeObject {
   }
 
   toJSON(node = this.root()): string | number | boolean | object | any[] | null {
-    if (!node) {
-      // Handle cases where the node itself is null or undefined, perhaps root is not set
-      return null;
-    }
     if (!isIterable(node)) {
       return node.value;
     }
