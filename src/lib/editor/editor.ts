@@ -398,7 +398,7 @@ export class EditorWrapper {
     return this.scrolling && getStatusState().enableSyncScroll;
   }
 
-  async applyFoldAction(foldAction: NonNullable<ReturnType<typeof getStatusState>['lastFoldAction']>) {
+  applyFoldAction = async (foldAction: NonNullable<ReturnType<typeof getStatusState>['lastFoldAction']>) => {
     // console.l(`[${this.kind}] applyFoldAction called with:`, foldAction);
     if (!getStatusState().enableSyncFold) {
       // console.l(`[${this.kind}] Sync fold disabled.`);
