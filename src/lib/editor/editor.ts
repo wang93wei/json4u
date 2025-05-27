@@ -147,24 +147,28 @@ export class EditorWrapper {
           const nodeStartLineNumber = model.getPositionAt(foundNodeInfo.node.offset).lineNumber;
           const region = foldingModel.getRegionAtLine(nodeStartLineNumber);
 
-          if (region && region.startLineNumber === nodeStartLineNumber) {
-                const isNowFolded = foldingModel.isCollapsed(region.startLineNumber);
-
-                // Prevent feedback loop if this editor was the last one to cause this exact state change
-                // This is a local check; the store's versioning also helps.
-                const lastAction = getStatusState().lastFoldAction;
-                if (lastAction && 
-                    lastAction.nodeId === foundNodeInfo.node.id && 
-                    lastAction.isFolded === isNowFolded &&
-                    lastAction.fromKind === this.kind) {
-                  // console.l(`[${this.kind}] Skipping fold action, already sent by this editor: ${foundNodeInfo.node.id} ${isNowFolded}`);
-                  return;
-                }
-
-                // console.l(`[${this.kind}] Sending fold action: ${foundNodeInfo.node.id} ${isNowFolded}`);
-                getStatusState().setLastFoldAction(foundNodeInfo.node.id, isNowFolded, this.kind);
+          if (region) {
+            // Check if this region actually corresponds to our node
+            // (e.g. its start line matches node's start line)
+            // The region object from Monaco contains `startLineNumber`.
+            if (region.startLineNumber === nodeStartLineNumber) {
+              const isNowFolded = foldingModel.isCollapsed(region.startLineNumber);
+              
+              // Prevent feedback loop if this editor was the last one to cause this exact state change
+              // This is a local check; the store's versioning also helps.
+              const lastAction = getStatusState().lastFoldAction;
+              if (lastAction && 
+                  lastAction.nodeId === foundNodeInfo.node.id && 
+                  lastAction.isFolded === isNowFolded &&
+                  lastAction.fromKind === this.kind) {
+                // console.l(`[${this.kind}] Skipping fold action, already sent by this editor: ${foundNodeInfo.node.id} ${isNowFolded}`);
+                return;
+              }
+              
+              // console.l(`[${this.kind}] Sending fold action: ${foundNodeInfo.node.id} ${isNowFolded}`);
+              getStatusState().setLastFoldAction(foundNodeInfo.node.id, isNowFolded, this.kind);
+            }
           }
-
         }
       }
     });
@@ -477,22 +481,36 @@ export class EditorWrapper {
     // Let's try a common approach:
     // Find the index of the region
     let targetRegionIndex = -1;
-    for (let i = 0; i < foldingModel.regions.length; i++) {
-        if (foldingModel.regions[i].startLineNumber === region.startLineNumber) {
-            targetRegionIndex = i;
-            break;
-        }
+    // Ensure foldingModel.regions is available before iterating
+    if (foldingModel.regions && typeof foldingModel.regions.length === 'number') {
+      for (let i = 0; i < foldingModel.regions.length; i++) {
+          if (foldingModel.regions[i].startLineNumber === region.startLineNumber) {
+              targetRegionIndex = i;
+              break;
+          }
+      }
+    } else {
+      console.warn(`[${this.kind}] foldingModel.regions is not available for node ${nodeId}.`);
+      return;
     }
 
-    if (targetRegionIndex === -1) {
-        // console.warn(`[${this.kind}] Could not find index for region at line ${nodeStartLine}.`);
+    // Pre-condition Checks
+    if (!foldingController || typeof (foldingController as any).setCollapsedStateAtIndex !== 'function') {
+        console.error(`[${this.kind}] Folding controller or setCollapsedStateAtIndex method not available.`);
+        return;
+    }
+
+    if (targetRegionIndex === -1 || (foldingModel.regions && targetRegionIndex >= foldingModel.regions.length)) {
+        console.warn(`[${this.kind}] Invalid targetRegionIndex (${targetRegionIndex}) for folding node ${nodeId} at line ${nodeStartLine}. Regions count: ${foldingModel.regions?.length}`);
         return;
     }
     
-    // console.l(`[${this.kind}] Applying fold action to node ${nodeId} at line ${nodeStartLine}: ${isFolded}`);
-    // This is a common way to interact with folding regions by their index in the folding model
-    foldingController.setCollapsedStateAtIndex(targetRegionIndex, isFolded);
-
+    try {
+      // console.l(`[${this.kind}] Applying fold action to node ${nodeId} at line ${nodeStartLine}, index ${targetRegionIndex}: ${isFolded}`);
+      (foldingController as any).setCollapsedStateAtIndex(targetRegionIndex, isFolded);
+    } catch (error) {
+      console.error(`[${this.kind}] Error applying fold state for node ${nodeId} at index ${targetRegionIndex}:`, error);
+    }
   }
 }
 

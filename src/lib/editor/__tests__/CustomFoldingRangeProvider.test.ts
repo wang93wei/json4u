@@ -307,4 +307,59 @@ describe('CustomFoldingRangeProvider', () => {
     });
   });
 
+  // New tests for invalid tree scenarios:
+  describe('Invalid Tree Scenarios', () => {
+    const dummyModel = createMockModel('{}'); // Model content doesn't matter for these tests
+
+    test('should return empty array if getTree returns undefined', () => {
+      const provider = new CustomFoldingRangeProvider(() => undefined);
+      const ranges = provider.provideFoldingRanges(dummyModel, {} as any, {} as any);
+      expect(ranges).toEqual([]);
+    });
+
+    test('should return empty array if tree.valid() is false', () => {
+      const mockInvalidTree = {
+        valid: () => false,
+        nodeMap: { root: { type: 'object', offset: 0, length: 2, childrenKeys: [] } }, // nodeMap might be checked
+      } as any; // Cast to any to mock Tree interface
+      const provider = new CustomFoldingRangeProvider(() => mockInvalidTree);
+      const ranges = provider.provideFoldingRanges(dummyModel, {} as any, {} as any);
+      expect(ranges).toEqual([]);
+    });
+
+    test('should return empty array if tree.nodeMap is undefined', () => {
+      const mockTreeNoNodeMap = {
+        valid: () => true,
+        nodeMap: undefined,
+      } as any;
+      const provider = new CustomFoldingRangeProvider(() => mockTreeNoNodeMap);
+      const ranges = provider.provideFoldingRanges(dummyModel, {} as any, {} as any);
+      expect(ranges).toEqual([]);
+    });
+
+    test('should return empty array if tree.nodeMap is an empty object', () => {
+      // This can be achieved with a real tree from an empty JSON
+      const treeWithEmptyNodeMap = createTree('{}'); // This tree is valid but its root has no childrenKeys
+                                                      // and provideFoldingRanges iterates nodeMap. If nodeMap is truly empty.
+
+      // To specifically test an empty nodeMap itself, if parseJSON might still create a root node:
+      const mockTreeEmptyNodeMap = {
+        valid: () => true,
+        nodeMap: {}, // Empty nodeMap
+        root: () => undefined, // Or a root that has no childrenKeys
+      } as any;
+
+      const provider = new CustomFoldingRangeProvider(() => mockTreeEmptyNodeMap);
+      const ranges = provider.provideFoldingRanges(dummyModel, {} as any, {} as any);
+      expect(ranges).toEqual([]);
+
+      // Also test with a valid tree that results in no iterable nodes in nodeMap for folding
+      // (e.g. a tree from "123" or "\"string\"" which has no objects/arrays)
+      const treeScalar = createTree("123");
+      const providerScalar = new CustomFoldingRangeProvider(() => treeScalar);
+      const rangesScalar = providerScalar.provideFoldingRanges(dummyModel, {} as any, {} as any);
+      expect(rangesScalar).toEqual([]);
+
+    });
+  });
 });
