@@ -44,26 +44,40 @@ function genDom(tree: Tree, node: Node, addExpander?: boolean): H {
 
 function genArrayDom(tree: Tree, node: Node) {
   let existsLeafNode = false;
-  const headers = union(
-    ...tree.childrenNodes(node).map((child) => {
-      if (!hasChildren(child)) {
-        existsLeafNode = true;
+  const headerSet = new Set<string>();
+  const childrenInfo: { child: Node; index: number }[] = [];
+  const key2ExpanderId: Record<string, string> = {};
+
+  tree.childrenNodes(node).forEach((child, index) => {
+    childrenInfo.push({ child, index });
+    if (!hasChildren(child)) {
+      existsLeafNode = true;
+    }
+    child.childrenKeys.forEach((key) => headerSet.add(key));
+
+    // Inline genArrayExpanderIds logic:
+    // Iterate over grandchildren to find keys that need expanders
+    tree.mapChildren(child, (grandson, key) => {
+      if (hasChildren(grandson) && !key2ExpanderId[key]) {
+        key2ExpanderId[key] = genExpanderId(node.id, key);
       }
-      return child.childrenKeys;
-    }),
-  );
+    });
+  });
+
+  const headers = Array.from(headerSet);
 
   // if the child nodes are heterogeneous (object and array nodes are treated as isomorphic.)
   // then we need to show index to imply the presence of heterogeneous nodes to the user.
   const indexHeader = existsLeafNode ? h("th") : "";
-  const key2ExpanderId = genArrayExpanderIds(tree, node);
+  // key2ExpanderId is now populated in the loop above
+
   const rowForHeaders = headers.length
     ? h("tr", indexHeader)
         .addChildren(headers.map((key) => genTableHeader(tree, node, key, key2ExpanderId[key])))
         .class("sticky-scroll")
     : "";
 
-  const rows = tree.mapChildren(node, (child, i) => {
+  const rows = childrenInfo.map(({ child, index: i }) => {
     const indexCell = existsLeafNode ? h("td", h("span", i).class("tbl-no")).class("tbl-index") : "";
     let valueCells: H[] = [];
 
@@ -82,15 +96,14 @@ function genArrayDom(tree: Tree, node: Node) {
 }
 
 function genObjectDom(tree: Tree, node: Node) {
-  const key2ExpanderId = genObjectExpanderIds(tree, node);
-
   return h(
     "table",
     h("tbody").addChildren(
       // generate key:value pair as the row
-      tree.mapChildren(node, (child, key) =>
-        h("tr", genTableHeader(tree, node, key, key2ExpanderId[key]), h("td", genDom(tree, child))),
-      ),
+      tree.mapChildren(node, (child, key) => {
+        const expanderId = hasChildren(child) ? genExpanderId(child.id) : undefined;
+        return h("tr", genTableHeader(tree, node, key, expanderId), h("td", genDom(tree, child)));
+      }),
     ),
   ).class("tbl");
 }
@@ -119,32 +132,6 @@ function genExpander(expanderId?: string) {
     return "";
   }
   return h("div").id(expanderId).class("tbl-expander", "codicon", "codicon-folding-expanded");
-}
-
-function genArrayExpanderIds(tree: Tree, arrayNode: Node) {
-  const key2ExpanderId: Record<string, string> = {};
-
-  tree.mapChildren(arrayNode, (child) => {
-    tree.mapChildren(child, (grandson, key) => {
-      if (hasChildren(grandson) && !key2ExpanderId[key]) {
-        key2ExpanderId[key] = genExpanderId(arrayNode.id, key);
-      }
-    });
-  });
-
-  return key2ExpanderId;
-}
-
-function genObjectExpanderIds(tree: Tree, objectNode: Node) {
-  const key2ExpanderId: Record<string, string> = {};
-
-  tree.mapChildren(objectNode, (child, key) => {
-    if (hasChildren(child)) {
-      key2ExpanderId[key] = genExpanderId(child.id);
-    }
-  });
-
-  return key2ExpanderId;
 }
 
 export interface KeyWithType {
