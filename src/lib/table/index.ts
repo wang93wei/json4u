@@ -1,5 +1,5 @@
 import { genExpanderId, genTableId, toPath, toPointer } from "@/lib/idgen";
-import { hasChildren, isIterable, type Tree, type Node, NodeType, getRawValue } from "@/lib/parser";
+import { getChildrenKeys, hasChildren, isIterable, type Tree, type Node, NodeType, getRawValue } from "@/lib/parser";
 import { reduce, union } from "lodash-es";
 import { h, H } from "./tag";
 
@@ -53,7 +53,7 @@ function genArrayDom(tree: Tree, node: Node) {
     if (!hasChildren(child)) {
       existsLeafNode = true;
     }
-    child.childrenKeys.forEach((key) => headerSet.add(key));
+    getChildrenKeys(child).forEach((key) => headerSet.add(key));
 
     // Inline genArrayExpanderIds logic:
     // Iterate over grandchildren to find keys that need expanders
