@@ -147,28 +147,24 @@ export class EditorWrapper {
           const nodeStartLineNumber = model.getPositionAt(foundNodeInfo.node.offset).lineNumber;
           const region = foldingModel.getRegionAtLine(nodeStartLineNumber);
 
-          if (region) {
-            // Check if this region actually corresponds to our node
-            // (e.g. its start line matches node's start line)
-            // The region object from Monaco contains `startLineNumber`.
-            if (region.startLineNumber === nodeStartLineNumber) {
-              const isNowFolded = foldingModel.isCollapsed(region.startLineNumber);
-              
-              // Prevent feedback loop if this editor was the last one to cause this exact state change
-              // This is a local check; the store's versioning also helps.
-              const lastAction = getStatusState().lastFoldAction;
-              if (lastAction && 
-                  lastAction.nodeId === foundNodeInfo.node.id && 
-                  lastAction.isFolded === isNowFolded &&
-                  lastAction.fromKind === this.kind) {
-                // console.l(`[${this.kind}] Skipping fold action, already sent by this editor: ${foundNodeInfo.node.id} ${isNowFolded}`);
-                return;
-              }
-              
-              // console.l(`[${this.kind}] Sending fold action: ${foundNodeInfo.node.id} ${isNowFolded}`);
-              getStatusState().setLastFoldAction(foundNodeInfo.node.id, isNowFolded, this.kind);
-            }
+          if (region && region.startLineNumber === nodeStartLineNumber) {
+                const isNowFolded = foldingModel.isCollapsed(region.startLineNumber);
+
+                // Prevent feedback loop if this editor was the last one to cause this exact state change
+                // This is a local check; the store's versioning also helps.
+                const lastAction = getStatusState().lastFoldAction;
+                if (lastAction && 
+                    lastAction.nodeId === foundNodeInfo.node.id && 
+                    lastAction.isFolded === isNowFolded &&
+                    lastAction.fromKind === this.kind) {
+                  // console.l(`[${this.kind}] Skipping fold action, already sent by this editor: ${foundNodeInfo.node.id} ${isNowFolded}`);
+                  return;
+                }
+
+                // console.l(`[${this.kind}] Sending fold action: ${foundNodeInfo.node.id} ${isNowFolded}`);
+                getStatusState().setLastFoldAction(foundNodeInfo.node.id, isNowFolded, this.kind);
           }
+
         }
       }
     });
