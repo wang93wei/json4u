@@ -139,8 +139,10 @@ export class EditorWrapper {
       }
 
       const foldingController = this.editor.getContribution('editor.contrib.foldingController');
-      // The getFoldingModel method might be asynchronous or part of a sub-property.
-      const foldingModel = await (foldingController as any)?.getFoldingModel?.();
+      // getFoldingModel is now called synchronously because recent versions of the API guarantee it returns the model immediately.
+      // Previously, this method could be asynchronous, but this is no longer the case as of [insert version or date if known].
+      // This change ensures we do not unnecessarily await a synchronous method.
+      const foldingModel = (foldingController as any)?.getFoldingModel(); 
 
       // Guard Clause: Condition B
       if (!foldingModel || typeof foldingModel.getRegionAtLine !== 'function' || typeof foldingModel.isCollapsed !== 'function') {
