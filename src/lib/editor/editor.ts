@@ -139,8 +139,8 @@ export class EditorWrapper {
       }
 
       const foldingController = this.editor.getContribution('editor.contrib.foldingController');
-      // The getFoldingModel method might be asynchronous or part of a sub-property.
-      const foldingModel = await (foldingController as any)?.getFoldingModel?.();
+      // Corrected: removed await, changed optional call to direct method call
+      const foldingModel = (foldingController as any)?.getFoldingModel(); 
 
       // Guard Clause: Condition B
       if (!foldingModel || typeof foldingModel.getRegionAtLine !== 'function' || typeof foldingModel.isCollapsed !== 'function') {
