@@ -1,46 +1,50 @@
 import { type ComponentPropsWithoutRef, type ElementRef, type FC, forwardRef } from "react";
 import { Input } from "@/components/ui/input";
-import { ViewMode } from "@/lib/db/config";
+// import { ViewMode } from "@/lib/db/config"; // ViewMode and useEditorStore seems unused in the new logic
 import { toastErr, toastSucc } from "@/lib/utils";
-import { useEditorStore } from "@/stores/editorStore";
-import { useStatusStore } from "@/stores/statusStore";
+// import { useEditorStore } from "@/stores/editorStore";
+import { getStatusState, useStatusStore } from "@/stores/statusStore"; // getStatusState added
+import { getTreeState } from "@/stores/treeStore"; // getTreeState added
 import { useTranslations } from "next-intl";
-import { useShallow } from "zustand/shallow";
+// import { useShallow } from "zustand/shallow"; // useShallow seems unused if we simplify useStatusStore usage
 import InputBox from "./InputBox";
 
-function useFilter() {
+function useJsonPathSearch() {
   const t = useTranslations();
-  const secondary = useEditorStore((state) => state.secondary);
-  const { viewMode, setViewMode } = useStatusStore(
-    useShallow((state) => ({
-      viewMode: state.viewMode,
-      setViewMode: state.setViewMode,
-      setCommandMode: state.setCommandMode,
-    })),
-  );
+  // const secondary = useEditorStore((state) => state.secondary); // Not used in new logic
+  // const { viewMode, setViewMode } = useStatusStore( // Not used in new logic
+  //   useShallow((state) => ({
+  //     viewMode: state.viewMode,
+  //     setViewMode: state.setViewMode,
+  //     setCommandMode: state.setCommandMode,
+  //   })),
+  // );
 
-  return async (filter: string) => {
-    filter = filter.trim();
+  return (jsonPathString: string) => {
+    jsonPathString = jsonPathString.trim();
 
-    if (!filter) {
-      toastSucc(t("cmd_exec_succ", { name: t("json_path_filter") }));
-      return;
-    } else if (!window.worker) {
-      toastErr(t("cmd_exec_fail", { name: t("json_path_filter") }));
+    if (!jsonPathString) {
+      // User submitted an empty path, maybe clear selection or do nothing
+      // For now, let's provide feedback that it's empty.
+      toastErr(t("json_path_empty_input_err") || "JSON Path cannot be empty.");
       return;
     }
 
-    if (viewMode != ViewMode.Text) {
-      setViewMode(ViewMode.Text);
+    const tree = getTreeState().main;
+
+    if (!tree || !tree.valid()) {
+      toastErr(t("json_path_invalid_tree_err") || "JSON data is not available or invalid.");
+      return;
     }
 
-    const { output, error } = await window.worker.jsonPath(filter);
+    // Assuming findNodeByPath is now part of the Tree class instance
+    const foundNode = tree.findNodeByPath(jsonPathString);
 
-    if (error) {
-      toastErr(t("cmd_exec_fail", { name: t("json_path_filter") }) + ": " + filter);
+    if (foundNode) {
+      getStatusState().setRevealPosition({ treeNodeId: foundNode.id, type: "node", from: "jsonPathSearch" });
+      toastSucc(t("json_path_found_succ") || `Node found for path: ${jsonPathString}`);
     } else {
-      await secondary!.parseAndSet(output ?? "", {}, false);
-      toastSucc(t("cmd_exec_succ", { name: t("json_path_filter") }));
+      toastErr(t("json_path_not_found_err") || `Node not found for path: ${jsonPathString}`);
     }
   };
 }
@@ -48,9 +52,10 @@ function useFilter() {
 const JsonPathInput: FC = forwardRef<ElementRef<typeof Input>, ComponentPropsWithoutRef<typeof Input>>(
   ({ className, ...props }, ref) => {
     const t = useTranslations();
-    const filter = useFilter();
+    const search = useJsonPathSearch(); // Changed from useFilter to useJsonPathSearch
 
-    return <InputBox id="json-path-input" run={filter} placeholder={t("json_path_placeholder")} {...props} />;
+    // InputBox expects a run function that takes the input string
+    return <InputBox id="json-path-input" run={search} placeholder={t("json_path_placeholder")} {...props} />;
   },
 );
 

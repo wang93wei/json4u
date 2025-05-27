@@ -6,7 +6,7 @@ import { vsURL } from "@/lib/editor/cdn";
 import { EditorWrapper, type Kind } from "@/lib/editor/editor";
 import { useEditor, useEditorStore } from "@/stores/editorStore";
 import { useStatusStore } from "@/stores/statusStore";
-import { getTree } from "@/stores/treeStore";
+import { getTree, useTree } from "@/stores/treeStore"; // Added useTree
 import { loader, Editor as MonacoEditor } from "@monaco-editor/react";
 import { useTranslations } from "next-intl";
 import { useShallow } from "zustand/shallow";
@@ -22,8 +22,9 @@ export default function Editor({ kind, ...props }: EditorProps) {
   const setEditor = useEditorStore((state) => state.setEditor);
   const setTranslations = useEditorStore((state) => state.setTranslations);
 
-  useDisplayExample();
-  useRevealNode();
+  useDisplayExample(kind); // Pass kind
+  useRevealNode(kind); // Pass kind
+  useSyncFold(kind); // Add this call
 
   return (
     <MonacoEditor
@@ -65,8 +66,9 @@ export default function Editor({ kind, ...props }: EditorProps) {
 }
 
 // reveal position in text
-export function useRevealNode() {
-  const editor = useEditor("main");
+export function useRevealNode(kind: Kind) { // Added kind parameter
+  const editor = useEditor(kind); // Use kind
+  const tree = useTree(kind); // Use kind to get specific tree
   const { isNeedReveal, revealPosition } = useStatusStore(
     useShallow((state) => ({
       isNeedReveal: state.isNeedReveal("editor"),
@@ -77,13 +79,13 @@ export function useRevealNode() {
   useEffect(() => {
     const { treeNodeId, type } = revealPosition;
 
-    if (editor && isNeedReveal && treeNodeId) {
-      const node = getTree().node(treeNodeId);
+    if (editor && tree && isNeedReveal && treeNodeId) { // Check tree
+      const node = tree.node(treeNodeId); // Use specific tree's node method
       if (node) {
         editor.revealOffset((type === "key" ? node.boundOffset : node.offset) + 1);
       }
     }
-  }, [editor, revealPosition, isNeedReveal]);
+  }, [editor, tree, revealPosition, isNeedReveal, kind]); // Added tree and kind to dependencies
 }
 
 const exampleData = `{
@@ -134,13 +136,26 @@ const exampleData = `{
   "Clarke Peters": null
 }`;
 
-function useDisplayExample() {
-  const editor = useEditor("main");
+function useDisplayExample(kind: Kind) { // Added kind parameter
+  const editor = useEditor(kind); // Use kind
   const incrEditorInitCount = useStatusStore((state) => state.incrEditorInitCount);
 
   useEffect(() => {
     if (editor && incrEditorInitCount() <= 1) {
       editor.parseAndSet(exampleData);
     }
-  }, [editor]);
+  }, [editor, kind]); // Added kind to dependencies
+}
+
+// Hook to synchronize folding actions from statusStore
+function useSyncFold(kind: Kind) {
+  const lastFoldAction = useStatusStore(useShallow((state) => state.lastFoldAction));
+  const editorWrapper = useEditor(kind);
+
+  useEffect(() => {
+    if (editorWrapper && lastFoldAction) {
+      // console.l(`[${kind}] Received fold action:`, lastFoldAction);
+      editorWrapper.applyFoldAction(lastFoldAction);
+    }
+  }, [lastFoldAction, editorWrapper, kind]);
 }

@@ -1,4 +1,5 @@
 import { type Config, defaultConfig, keyName, type ViewMode, type ViewModeValue, storage } from "@/lib/db/config";
+import { type Kind } from "@/lib/editor/editor"; // Added Kind import
 import type { RevealPosition } from "@/lib/graph/types";
 import { type ParseOptions } from "@/lib/parser";
 import { type FunctionKeys } from "@/lib/utils";
@@ -26,6 +27,8 @@ export interface StatusState extends Config {
   showPricingOverlay?: boolean;
   unfoldNodeMap: Record<string, boolean>;
   unfoldSiblingsNodeMap: Record<string, boolean>;
+  // enableSyncFold is inherited from Config
+  lastFoldAction?: { nodeId: string; isFolded: boolean; fromKind: Kind; version: number };
 
   incrEditorInitCount: () => number;
   setLeftPanelWidth: (width: number) => void;
@@ -47,10 +50,12 @@ export interface StatusState extends Config {
   toggleFoldNode: (nodeId: string) => void;
   toggleFoldSibingsNode: (nodeId: string) => void;
   resetFoldStatus: () => void;
+  setEnableSyncFold: (enable: boolean) => void; // Added setEnableSyncFold
+  setLastFoldAction: (nodeId: string, isFolded: boolean, fromKind: Kind) => void; // Added setLastFoldAction
 }
 
 const initialStates: Omit<StatusState, FunctionKeys<StatusState>> = {
-  ...defaultConfig,
+  ...defaultConfig, // enableSyncFold: true will be included from defaultConfig
   _hasHydrated: false,
   editorInitCount: 0,
   cursorPosition: { line: 0, column: 0 },
@@ -58,6 +63,7 @@ const initialStates: Omit<StatusState, FunctionKeys<StatusState>> = {
   revealPosition: { version: 0, treeNodeId: "", type: "node", from: "editor" },
   unfoldNodeMap: {},
   unfoldSiblingsNodeMap: {},
+  lastFoldAction: undefined, // Initialize lastFoldAction
 };
 
 export const useStatusStore = create<StatusState>()(
@@ -133,7 +139,7 @@ export const useStatusStore = create<StatusState>()(
         } = get();
 
         if (scene === "editor") {
-          return enableSyncScroll ? from !== "editor" : includes(["statusBar", "graphAll"], from);
+          return enableSyncScroll ? from !== "editor" : includes(["statusBar", "graphAll", "jsonPathSearch"], from);
         } else if (scene === "graph") {
           return enableSyncScroll ? from !== "graphOthers" : includes(["statusBar", "search", "graphAll"], from);
         }
@@ -176,6 +182,21 @@ export const useStatusStore = create<StatusState>()(
       resetFoldStatus() {
         set({ unfoldNodeMap: {}, unfoldSiblingsNodeMap: {} });
       },
+
+  setEnableSyncFold(enable: boolean) {
+    set({ enableSyncFold: enable });
+  },
+
+  setLastFoldAction(nodeId: string, isFolded: boolean, fromKind: Kind) {
+    set((state) => ({
+      lastFoldAction: {
+        nodeId,
+        isFolded,
+        fromKind,
+        version: (state.lastFoldAction?.version ?? 0) + 1,
+      },
+    }));
+  },
     }),
     {
       name: keyName,
