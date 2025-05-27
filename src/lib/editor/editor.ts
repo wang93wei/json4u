@@ -132,41 +132,55 @@ export class EditorWrapper {
       const offset = model.getOffsetAt(position);
       const foundNodeInfo = this.tree.findNodeAtOffset(offset);
 
-      if (foundNodeInfo && foundNodeInfo.node && (foundNodeInfo.node.type === "object" || foundNodeInfo.node.type === "array")) {
-        const foldingController = this.editor.getContribution('editor.contrib.foldingController');
-        // The getFoldingModel method might be asynchronous or part of a sub-property.
-        // This is a common pattern, but needs verification against Monaco's exact API.
-        // For now, assuming direct access or a simple promise.
-        // Casting to `any` to bypass strict type checking for this dynamic part.
-        const foldingModel = await (foldingController as any)?.getFoldingModel?.();
-
-
-        if (foldingModel && typeof foldingModel.getRegionAtLine === 'function' && typeof foldingModel.isCollapsed === 'function') {
-          // Try to get the folding region exactly at the start line of the node.
-          // Node offsets are 0-based, line numbers 1-based.
-          const nodeStartLineNumber = model.getPositionAt(foundNodeInfo.node.offset).lineNumber;
-          const region = foldingModel.getRegionAtLine(nodeStartLineNumber);
-
-          if (region && region.startLineNumber === nodeStartLineNumber) {
-                const isNowFolded = foldingModel.isCollapsed(region.startLineNumber);
-
-                // Prevent feedback loop if this editor was the last one to cause this exact state change
-                // This is a local check; the store's versioning also helps.
-                const lastAction = getStatusState().lastFoldAction;
-                if (lastAction && 
-                    lastAction.nodeId === foundNodeInfo.node.id && 
-                    lastAction.isFolded === isNowFolded &&
-                    lastAction.fromKind === this.kind) {
-                  // console.l(`[${this.kind}] Skipping fold action, already sent by this editor: ${foundNodeInfo.node.id} ${isNowFolded}`);
-                  return;
-                }
-
-                // console.l(`[${this.kind}] Sending fold action: ${foundNodeInfo.node.id} ${isNowFolded}`);
-                getStatusState().setLastFoldAction(foundNodeInfo.node.id, isNowFolded, this.kind);
-          }
-
-        }
+      // Guard Clause: Condition A
+      if (!foundNodeInfo || !foundNodeInfo.node || (foundNodeInfo.node.type !== "object" && foundNodeInfo.node.type !== "array")) {
+        // console.debug(`[${this.kind}] listenOnDidChangeFolding: No valid foldable node found at offset.`);
+        return;
       }
+
+      const foldingController = this.editor.getContribution('editor.contrib.foldingController');
+      // The getFoldingModel method might be asynchronous or part of a sub-property.
+      const foldingModel = await (foldingController as any)?.getFoldingModel?.();
+
+      // Guard Clause: Condition B
+      if (!foldingModel || typeof foldingModel.getRegionAtLine !== 'function' || typeof foldingModel.isCollapsed !== 'function') {
+        console.warn(`[${this.kind}] listenOnDidChangeFolding: Folding model or required methods not available.`);
+        return;
+      }
+
+      // Node offsets are 0-based, line numbers 1-based.
+      const nodeStartLineNumber = model.getPositionAt(foundNodeInfo.node.offset).lineNumber;
+      const region = foldingModel.getRegionAtLine(nodeStartLineNumber);
+
+      // Guard Clause: Condition C
+      if (!region) {
+        // console.debug(`[${this.kind}] listenOnDidChangeFolding: No folding region found at line ${nodeStartLineNumber}.`);
+        return;
+      }
+
+      // Guard Clause: Condition D
+      // Check if this region actually corresponds to our node (e.g. its start line matches node's start line)
+      if (region.startLineNumber !== nodeStartLineNumber) {
+        // console.debug(`[${this.kind}] listenOnDidChangeFolding: Region start line ${region.startLineNumber} does not match node start line ${nodeStartLineNumber}.`);
+        return;
+      }
+      
+      const isNowFolded = foldingModel.isCollapsed(region.startLineNumber);
+      
+      // Prevent feedback loop if this editor was the last one to cause this exact state change
+      // This is a local check; the store's versioning also helps.
+      const lastAction = getStatusState().lastFoldAction;
+      // Guard Clause: Condition E (already a guard)
+      if (lastAction && 
+          lastAction.nodeId === foundNodeInfo.node.id && 
+          lastAction.isFolded === isNowFolded &&
+          lastAction.fromKind === this.kind) {
+        // console.l(`[${this.kind}] Skipping fold action, already sent by this editor: ${foundNodeInfo.node.id} ${isNowFolded}`);
+        return;
+      }
+      
+      // console.l(`[${this.kind}] Sending fold action: ${foundNodeInfo.node.id} ${isNowFolded}`);
+      getStatusState().setLastFoldAction(foundNodeInfo.node.id, isNowFolded, this.kind);
     });
   }
 
@@ -425,7 +439,7 @@ export class EditorWrapper {
       return;
     }
 
-    const nodeStartLine = this.getPositionAt(nodeToChange.offset).lineNumber;
+    const nodeStartLine = model.getPositionAt(nodeToChange.offset).lineNumber;
 
     const foldingController = this.editor.getContribution('editor.contrib.foldingController');
     const foldingModel = await (foldingController as any)?.getFoldingModel?.();
