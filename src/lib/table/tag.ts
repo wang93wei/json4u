@@ -1,4 +1,12 @@
-import { escape, filter } from "lodash-es";
+// Helper function for HTML escaping
+function nativeHtmlEscape(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
 
 export function h(tag: string = "", ...children: (H | string)[]) {
   return new H(tag, ...children);
@@ -14,7 +22,7 @@ export class H {
   constructor(tag: string = "", ...children: (H | string)[]) {
     this.tag = tag;
     this.attrClass = [];
-    this.children = filter(children);
+    this.children = children;
   }
 
   id(id: string | undefined): H {
@@ -44,7 +52,7 @@ export class H {
 
   toString(): string {
     const childrenStr = this.children
-      .map((child) => (typeof child === "string" ? escape(child) : child.toString()))
+      .map((child) => (typeof child === "string" ? nativeHtmlEscape(child) : child.toString()))
       .join("");
 
     if (this.tag === "") {
