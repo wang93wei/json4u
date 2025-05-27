@@ -80,9 +80,12 @@ function _parseJsonPathString(pathString: string): (string | number)[] {
         segments.push(segment);
       }
     }
-    // If there's a leftover dot at the end of processing a segment (e.g. "prop."), advance past it.
+    // 如果在处理段的末尾有一个剩余的点（例如“prop.”），则将其视为格式错误的路径。
     if (i < path.length && path[i] === '.') {
-        i++;
+        throw new Error(`Malformed path: unexpected trailing dot at position ${i} in "${path}"`);
+        // 或者，如果您喜欢警告：
+        // console.warn(`Warning: Malformed path, unexpected trailing dot at position ${i} in "${path}"`);
+        // i++;
     }
   }
   return segments;
