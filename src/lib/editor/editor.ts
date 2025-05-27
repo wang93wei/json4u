@@ -1,4 +1,4 @@
-import { ParseOptions, Tree } from "@/lib/parser";
+import { Node, ParseOptions, Tree } from "@/lib/parser"; // Added Node for type checking
 import { type ParsedTree } from "@/lib/worker/command/parse";
 import { getEditorState } from "@/stores/editorStore";
 import { getStatusState } from "@/stores/statusStore";
@@ -12,31 +12,166 @@ type ScrollEvent = IScrollEvent & { _oldScrollTop: number; _oldScrollLeft: numbe
 
 const parseWait = 300;
 
+// Custom Folding Range Provider
+class CustomFoldingRangeProvider implements window.monaco.languages.FoldingRangeProvider {
+  constructor(private getTree: () => Tree | undefined) {}
+
+  provideFoldingRanges(
+    model: window.monaco.editor.ITextModel,
+    context: window.monaco.languages.FoldingContext,
+    token: window.monaco.CancellationToken,
+  ): window.monaco.languages.FoldingRange[] {
+    const tree = this.getTree();
+    if (!tree || !tree.valid() || !tree.nodeMap) {
+      return [];
+    }
+
+    const ranges: window.monaco.languages.FoldingRange[] = [];
+    for (const nodeId in tree.nodeMap) {
+      const node = tree.nodeMap[nodeId];
+
+      if ((node.type === "object" || node.type === "array") && node.childrenKeys && node.childrenKeys.length > 0) {
+        const startPosition = model.getPositionAt(node.offset);
+        // The end position for folding should be the line before the closing brace/bracket if it's on its own line.
+        // Let's find the start of the last child. If no children, this won't run.
+        // A common approach: end is the line of the last char of the node's content, excluding the closing brace line.
+        // For `{\n  "a": 1\n}`, endLine should be the line of `"a": 1`.
+        // The closing `}` is on `startPosition.lineNumber + (number of lines in content including children) + 1`.
+        // A simpler rule: the end of the range is the line of the closing bracket/brace itself.
+        // Monaco then typically adjusts this to fold up to the line *before* the end if kind is Region.
+        // Let's try end = line of closing char.
+        const endPositionCandidate = model.getPositionAt(node.offset + node.length -1);
+        let endLineNumber = endPositionCandidate.lineNumber;
+
+        // If the closing char is the first char on its line (e.g., pretty-printed JSON),
+        // Monaco prefers the fold to end on the line above it.
+        if (endPositionCandidate.column === 1 && node.length > 1) { // node.length > 1 to avoid issues with empty {} or [] if they ever exist like this
+            endLineNumber = Math.max(startPosition.lineNumber, endPositionCandidate.lineNumber - 1);
+        }
+
+
+        if (startPosition.lineNumber < endLineNumber) {
+          const count = node.childrenKeys.length;
+          const itemLabel = count === 1 ? "item" : "items";
+          let collapsedText = "";
+          if (node.type === "object") {
+            collapsedText = `{...} // ${count} ${itemLabel}`;
+          } else {
+            // array
+            collapsedText = `[...] // ${count} ${itemLabel}`;
+          }
+
+          ranges.push({
+            start: startPosition.lineNumber,
+            end: endLineNumber,
+            kind: window.monaco.languages.FoldingRangeKind.Region,
+            collapsedText,
+          });
+        }
+      }
+    }
+    return ranges;
+  }
+}
+
 export class EditorWrapper {
   editor: editorApi.IStandaloneCodeEditor;
   kind: Kind;
-  // 滚动中吗？
   scrolling: number;
   tree: Tree;
   delayParseAndSet: DebouncedFunc<(text: string, extraOptions: ParseOptions, resetCursor: boolean) => void>;
+  foldingProviderDisposable?: window.monaco.IDisposable; // Store the disposable
 
   constructor(editor: editorApi.IStandaloneCodeEditor, kind: Kind) {
     this.editor = editor;
     this.kind = kind;
     this.scrolling = 0;
-    this.tree = new Tree();
+    this.tree = new Tree(); // Initial empty tree
     this.delayParseAndSet = debounce(this.parseAndSet, parseWait, { trailing: true });
   }
 
   init() {
+    // Dispose of any existing folding provider before setting a new one
+    this.foldingProviderDisposable?.dispose();
+    // Register the custom folding range provider
+    if (window.monaco && window.monaco.languages && window.monaco.languages.registerFoldingRangeProvider) {
+      const provider = new CustomFoldingRangeProvider(() => this.tree);
+      this.foldingProviderDisposable = window.monaco.languages.registerFoldingRangeProvider('json', provider);
+    }
+
     this.listenOnChange();
     this.listenOnDidPaste();
     this.listenOnKeyDown();
     this.listenOnDropFile();
+    this.listenOnDidChangeFolding(); // Add this call
 
     if (this.isMain()) {
       this.listenOnDidChangeCursorPosition();
     }
+  }
+
+  // Method to listen for folding changes
+  listenOnDidChangeFolding() {
+    this.editor.onDidChangeHiddenAreas(async () => {
+      if (!getStatusState().enableSyncFold) {
+        return;
+      }
+
+      // Heuristic: Check node at current cursor position.
+      // This assumes user interaction for folding often involves clicking near the line number.
+      const position = this.editor.getPosition();
+      if (!position || !this.tree || !this.tree.valid()) {
+        return;
+      }
+
+      const model = this.editor.getModel();
+      if (!model) {
+        return;
+      }
+
+      const offset = model.getOffsetAt(position);
+      const foundNodeInfo = this.tree.findNodeAtOffset(offset);
+
+      if (foundNodeInfo && foundNodeInfo.node && (foundNodeInfo.node.type === "object" || foundNodeInfo.node.type === "array")) {
+        const foldingController = this.editor.getContribution('editor.contrib.foldingController');
+        // The getFoldingModel method might be asynchronous or part of a sub-property.
+        // This is a common pattern, but needs verification against Monaco's exact API.
+        // For now, assuming direct access or a simple promise.
+        // Casting to `any` to bypass strict type checking for this dynamic part.
+        const foldingModel = await (foldingController as any)?.getFoldingModel?.();
+
+
+        if (foldingModel && typeof foldingModel.getRegionAtLine === 'function' && typeof foldingModel.isCollapsed === 'function') {
+          // Try to get the folding region exactly at the start line of the node.
+          // Node offsets are 0-based, line numbers 1-based.
+          const nodeStartLineNumber = model.getPositionAt(foundNodeInfo.node.offset).lineNumber;
+          const region = foldingModel.getRegionAtLine(nodeStartLineNumber);
+
+          if (region) {
+            // Check if this region actually corresponds to our node
+            // (e.g. its start line matches node's start line)
+            // The region object from Monaco contains `startLineNumber`.
+            if (region.startLineNumber === nodeStartLineNumber) {
+              const isNowFolded = foldingModel.isCollapsed(region.startLineNumber);
+              
+              // Prevent feedback loop if this editor was the last one to cause this exact state change
+              // This is a local check; the store's versioning also helps.
+              const lastAction = getStatusState().lastFoldAction;
+              if (lastAction && 
+                  lastAction.nodeId === foundNodeInfo.node.id && 
+                  lastAction.isFolded === isNowFolded &&
+                  lastAction.fromKind === this.kind) {
+                // console.l(`[${this.kind}] Skipping fold action, already sent by this editor: ${foundNodeInfo.node.id} ${isNowFolded}`);
+                return;
+              }
+              
+              // console.l(`[${this.kind}] Sending fold action: ${foundNodeInfo.node.id} ${isNowFolded}`);
+              getStatusState().setLastFoldAction(foundNodeInfo.node.id, isNowFolded, this.kind);
+            }
+          }
+        }
+      }
+    });
   }
 
   isMain() {
@@ -261,6 +396,107 @@ export class EditorWrapper {
 
   scrollable() {
     return this.scrolling && getStatusState().enableSyncScroll;
+  }
+
+  async applyFoldAction(foldAction: NonNullable<ReturnType<typeof getStatusState>['lastFoldAction']>) {
+    // console.l(`[${this.kind}] applyFoldAction called with:`, foldAction);
+    if (!getStatusState().enableSyncFold) {
+      // console.l(`[${this.kind}] Sync fold disabled.`);
+      return;
+    }
+
+    if (foldAction.fromKind === this.kind) {
+      // console.l(`[${this.kind}] Skipping action from self.`);
+      return;
+    }
+
+    const { nodeId, isFolded } = foldAction;
+    const nodeToChange = this.tree.node(nodeId);
+
+    if (!nodeToChange) {
+      console.error(`[${this.kind}] Node with ID ${nodeId} not found in tree.`);
+      return;
+    }
+
+    if (nodeToChange.type !== "object" && nodeToChange.type !== "array") {
+      // console.l(`[${this.kind}] Node ${nodeId} is not a foldable type (${nodeToChange.type}).`);
+      return; // Only objects and arrays are typically foldable
+    }
+    
+    const model = this.editor.getModel();
+    if (!model) {
+      console.error(`[${this.kind}] Editor model not available.`);
+      return;
+    }
+
+    const nodeStartLine = this.getPositionAt(nodeToChange.offset).lineNumber;
+
+    const foldingController = this.editor.getContribution('editor.contrib.foldingController');
+    const foldingModel = await (foldingController as any)?.getFoldingModel?.();
+
+    if (!foldingModel || typeof foldingModel.getRegionAtLine !== 'function' || typeof foldingModel.isCollapsed !== 'function' || typeof foldingModel.setCollapsed !== 'function') {
+      console.error(`[${this.kind}] Folding model or required methods not available.`);
+      return;
+    }
+
+    // Find the specific region that starts at nodeStartLine
+    // Monaco's folding regions are managed by the FoldingModel.
+    // We need to get the region that exactly matches our node's start.
+    const region = foldingModel.getRegionAtLine(nodeStartLine);
+
+    if (!region || region.startLineNumber !== nodeStartLine) {
+      // This can happen if the node itself isn't a direct folding point (e.g., empty object/array, or not considered foldable by Monaco's strategy)
+      // Or if nodeStartLine is part of a larger folded region, but not its start.
+      // console.warn(`[${this.kind}] Folding region not found or mismatched for node ${nodeId} at line ${nodeStartLine}. Region found:`, region);
+      return;
+    }
+    
+    const currentCollapsedState = foldingModel.isCollapsed(region.startLineNumber);
+
+    if (currentCollapsedState === isFolded) {
+      // console.l(`[${this.kind}] Node ${nodeId} at line ${nodeStartLine} already in desired state (${isFolded}).`);
+      return;
+    }
+
+    // The setCollapsed method on FoldingModel typically expects an array of regions.
+    // We are targeting a single region.
+    // Note: The exact API for Monaco's foldingModel to set a single region's state might vary.
+    // Common patterns include:
+    // 1. model.setCollapsed([region], isFolded)
+    // 2. controller.setCollapsedStateForRegions([region], isFolded)
+    // 3. controller.setCollapsedStateAtIndex(regionIndex, isFolded)
+    // The prompt implies `foldingModel.setCollapsed(region.startLineNumber, isFolded)`
+    // but standard Monaco API usually takes a region object or index.
+    // Let's assume `foldingModel.setCollapsed([region], isFolded)` is what's intended if setCollapsed takes regions.
+    // Or, if there's a direct API like `foldingController.setCollapsedState(lineNumber, state)`, that would be simpler.
+    // Given `foldingModel.setCollapsed` is mentioned, and it usually takes regions array:
+    
+    // To be safe and align with typical Monaco patterns, we'd pass an array of IRegion objects.
+    // The `region` object obtained from `getRegionAtLine` should conform to `IRegion`.
+    // Let's try to use a method that acts on line numbers if available on controller, or pass region to model.
+    // The prompt suggests `foldingModel.setCollapsed(region.startLineNumber, isFolded)` which is unusual.
+    // A more common API pattern for `FoldingModel` would be `setCollapsed(regions: IRegion[], newState: boolean)`.
+    // Or `FoldingController` might have `setCollapsedStateForLine(lineNumber: number, state: boolean)`.
+
+    // Let's try a common approach:
+    // Find the index of the region
+    let targetRegionIndex = -1;
+    for (let i = 0; i < foldingModel.regions.length; i++) {
+        if (foldingModel.regions[i].startLineNumber === region.startLineNumber) {
+            targetRegionIndex = i;
+            break;
+        }
+    }
+
+    if (targetRegionIndex === -1) {
+        // console.warn(`[${this.kind}] Could not find index for region at line ${nodeStartLine}.`);
+        return;
+    }
+    
+    // console.l(`[${this.kind}] Applying fold action to node ${nodeId} at line ${nodeStartLine}: ${isFolded}`);
+    // This is a common way to interact with folding regions by their index in the folding model
+    foldingController.setCollapsedStateAtIndex(targetRegionIndex, isFolded);
+
   }
 }
 
