@@ -15,6 +15,80 @@ import {
   isRoot,
 } from "./node";
 
+// Helper function to parse JSON path strings
+function _parseJsonPathString(pathString: string): (string | number)[] {
+  if (pathString === "$" || pathString === "") {
+    return [];
+  }
+
+  // Remove leading "$." or "$"
+  let path = pathString.startsWith("$.") ? pathString.substring(2) : pathString.startsWith("$") ? pathString.substring(1) : pathString;
+  
+  // If path starts with a dot after removing "$", remove it. e.g. "$.prop" or "$[0]"
+  if (path.startsWith(".")) {
+    path = path.substring(1);
+  }
+
+
+  const segments: (string | number)[] = [];
+  let i = 0;
+  while (i < path.length) {
+    if (path[i] === '[') {
+      i++; // Move past '['
+      let segment = "";
+      if (path[i] === "'" || path[i] === '"') {
+        // Quoted property name
+        const quote = path[i];
+        i++; // Move past quote
+        while (i < path.length && path[i] !== quote) {
+          // TODO: Handle escaped quotes if necessary, e.g., obj['prop\'with\'quote']
+          segment += path[i];
+          i++;
+        }
+        if (i < path.length && path[i] === quote) {
+          i++; // Move past closing quote
+        } else {
+          // Unterminated quoted segment, might be an error or end of path
+          // For now, let's assume valid paths or rely on later validation if needed
+        }
+        segments.push(segment);
+      } else {
+        // Array index
+        while (i < path.length && path[i] !== ']') {
+          segment += path[i];
+          i++;
+        }
+        if (i < path.length && path[i] === ']') {
+          i++; // Move past ']'
+        }
+        if (/^\d+$/.test(segment)) { // Check if segment is purely numeric
+          segments.push(parseInt(segment, 10));
+        } else if (segment) { // Handle cases like ['property'] if not caught by quote logic - though current logic should handle it
+            segments.push(segment); // Treat as string if not purely numeric, e.g. for non-standard paths
+        }
+      }
+    } else if (path[i] === '.') {
+      i++; // Skip dot separator
+    } else {
+      // Property name
+      let segment = "";
+      while (i < path.length && path[i] !== '.' && path[i] !== '[') {
+        segment += path[i];
+        i++;
+      }
+      if (segment) { // Ensure non-empty segment before pushing
+        segments.push(segment);
+      }
+    }
+    // If there's a leftover dot at the end of processing a segment (e.g. "prop."), advance past it.
+    if (i < path.length && path[i] === '.') {
+        i++;
+    }
+  }
+  return segments;
+}
+
+
 export interface StringifyOptions extends ParseOptions {
   pure?: boolean;
 }
@@ -67,25 +141,16 @@ export class Tree implements TreeObject {
   }
 
   findNodeByPath(jsonPath: string): Node | undefined {
-    const pathSegments = jsonc.parsePath(jsonPath);
+    const pathSegments = _parseJsonPathString(jsonPath);
 
-    if (!pathSegments || pathSegments.length === 0) {
-      // jsonc.parsePath returns an empty array for invalid paths or paths like "$"
-      // For an empty path or "$", we should return the root if it exists.
-      // However, if jsonPath is truly invalid, parsePath might return something else or throw.
-      // Based on documentation, it returns an empty array for invalid paths.
-      // If path is just "$" or empty, it implies root.
-      // Let's assume an empty segments array means "no path" or "root path" if jsonPath was "$" or empty.
-      // If jsonPath was invalid, parsePath returns empty array.
-      // To distinguish, we might need to check original jsonPath,
-      // but for now, if segments are empty, and jsonPath was trivial (e.g. '$', '') return root.
-      // A robust way: jsonc.parsePath can throw an error for truly malformed paths.
-      // Let's assume parsePath returns empty for invalid, and for root path like "$"
-      // If jsonPath is "" or "$", pathSegments will be [].
-      if (jsonPath === "$" || jsonPath === "") {
-        return this.root();
-      }
-      return undefined; // Invalid or unhandled path
+    if (pathSegments.length === 0) {
+      // _parseJsonPathString returns an empty array for root paths like "$", ""
+      // or if the path effectively becomes empty after stripping "$." or "$"
+      // This aligns with the expectation that an empty segment array means root.
+      // For truly invalid paths, _parseJsonPathString might produce unexpected segments or errors,
+      // which would likely lead to 'undefined' being returned by the loop below.
+      // This behavior is acceptable for now.
+      return this.root();
     }
 
     let currentNode = this.root();
